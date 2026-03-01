@@ -1,0 +1,57 @@
+﻿apiVersion: apps.kruise.io/v1beta1
+kind: CloneSet
+metadata:
+  name: user
+  namespace: clearledger
+spec:
+  replicas: 6
+
+  selector:
+    matchLabels:
+      app: user
+
+  template:
+    metadata:
+      labels:
+        app: user
+    spec:
+      containers:
+        - name: user
+          image: clearledger/clearledger-user:v1.0.3
+          envFrom:
+            - configMapRef:
+                name: clearledger-config
+            - secretRef:
+                name: clearledger-secret
+          ports:
+            - name: http
+            - containerPort: 8082
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+  updateStrategy:
+    type: InPlaceIfPossible   # ✅ FIXED HERE
+
+    rollingUpdate:
+      partition: 4
+      maxUnavailable: 1
+      maxSurge: 1
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user
+  namespace: clearledger
+spec:
+  selector:
+    app: user
+  ports:
+
+    - port: 8082
+      targetPort: 8082

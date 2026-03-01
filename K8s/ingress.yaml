@@ -1,0 +1,42 @@
+﻿apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend-ingress
+  namespace: clearledger
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+          - path: /api/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth
+                port:
+                  number: 8081
+
+          # User Service
+          - path: /api/users
+            pathType: Prefix
+            backend:
+              service:
+                name: user
+                port:
+                  number: 8082
+
+          # Account Service
+          - path: /api/accounts
+            pathType: Prefix
+            backend:
+              service:
+                name: account
+                port:
+                  number: 8083

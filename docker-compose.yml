@@ -1,0 +1,316 @@
+﻿version: "3.8"
+
+services:
+
+  # =========================
+  # MySQL
+  # =========================
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: clearledger_system
+    ports:
+      - "3308:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: always
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    networks:
+      - clearledger-network
+
+
+  # =========================
+  # Redis
+  # =========================
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - clearledger-network
+
+
+  # =========================
+  # Zookeeper
+  # =========================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - clearledger-network
+
+
+  # =========================
+  # Kafka
+  # =========================
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - clearledger-network
+
+
+# =========================
+# Frontend
+# =========================
+
+  frontend:
+    image: clearledger/clearledger-frontend:v1.0.3
+    container_name: clearledger-frontend
+    ports:
+      - "5173:80"
+    networks:
+      - clearledger-network
+
+
+  # =========================
+  # Eureka Server
+  # =========================
+  eureka-server:
+    image: clearledger/clearledger-eureka:v1.0.3
+    container_name: eureka-server
+    ports:
+      - "8761:8761"
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8761/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - clearledger-network
+
+# =========================
+# API Gateway
+# =========================
+  gatway-server:
+    image: clearledger/clearledger-gateway:v1.0.3
+    container_name: apiGateway-server
+    ports:
+      - "8080:8080"
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+    restart: always
+    networks:
+      - clearledger-network
+
+
+  # =========================
+  # Auth Service (LOCAL BUILD)
+  # =========================
+  auth-service:
+    image: clearledger/clearledger-auth:v1.0.3
+    container_name: auth-service
+    ports:
+      - "8081:8081"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      eureka-server:
+        condition: service_healthy
+
+    restart: always
+    networks:
+      - clearledger-network
+
+
+  # =========================
+  # User Service
+  # =========================
+  user-service:
+    image: clearledger/clearledger-user:v1.0.3
+    container_name: user-service
+    ports:
+      - "8082:8082"
+    depends_on:
+      auth-service:
+        condition: service_started
+      eureka-server:
+        condition: service_healthy
+    restart: always
+    networks:
+      - clearledger-network
+
+
+  # =========================
+  # Account Service
+  # =========================
+  account-service:
+    image: clearledger/clearledger-account:v1.0.3
+    container_name: account-service
+    ports:
+      - "8083:8083"
+    depends_on:
+      auth-service:
+        condition: service_started
+      eureka-server:
+        condition: service_healthy
+    restart: always
+    networks:
+      - clearledger-network
+
+
+  # =========================
+  # Transaction Service
+  # =========================
+  transaction-service:
+    image: clearledger/clearledger-transaction:v1.0.3
+    container_name: transaction-service
+    ports:
+      - "8084:8084"
+    depends_on:
+      kafka:
+        condition: service_started
+      auth-service:
+        condition: service_started
+      eureka-server:
+        condition: service_healthy
+    restart: always
+    networks:
+      - clearledger-network
+
+
+  # =========================
+  # Notification Service
+  # =========================
+  notification-service:
+    image: clearledger/clearledger-notify:v1.0.3
+    container_name: notification-service
+    ports:
+      - "8085:8085"
+    env_file:
+      - .env
+    depends_on:
+      kafka:
+        condition: service_started
+      auth-service:
+        condition: service_started
+      eureka-server:
+        condition: service_healthy
+    restart: always
+    networks:
+      - clearledger-network
+
+
+  # =========================
+  # Payment Service
+  # =========================
+  payment-service:
+    image: clearledger/clearledger-payment:v1.0.3
+    container_name: payment-service
+    ports:
+      - "8089:8089"
+    env_file:
+      - .env
+    depends_on:
+      kafka:
+        condition: service_started
+      auth-service:
+        condition: service_started
+      eureka-server:
+        condition: service_healthy
+    restart: always
+    networks:
+      - clearledger-network
+
+
+  # =========================
+  # KYC Service
+  # =========================
+  kyc-service:
+    image: clearledger/clearledger-kyc:v1.0.3
+    container_name: kyc-service
+    ports:
+      - "8087:8087"
+    depends_on:
+      kafka:
+        condition: service_started
+      auth-service:
+        condition: service_started
+      eureka-server:
+        condition: service_healthy
+    restart: always
+    networks:
+      - clearledger-network
+
+
+  # =========================
+  # Admin Service
+  # =========================
+  admin-service:
+    image: clearledger/clearledger-admin:v1.0.3
+    container_name: admin-service
+    ports:
+      - "8088:8088"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      eureka-server:
+        condition: service_healthy
+    restart: always
+    networks:
+      - clearledger-network
+
+
+
+
+
+# =========================
+# Volumes
+# =========================
+volumes:
+  mysql_data:
+  kafka_data:
+
+
+# =========================
+# Network
+# =========================
+networks:
+  clearledger-network:
+    driver: bridge

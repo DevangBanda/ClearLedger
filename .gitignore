@@ -1,0 +1,44 @@
+HELP.md
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+jwt-secrets/
+### VS Code ###
+.vscode/
+auth-server/src/main/resources/private.key
+**/src/main/resources/private.key
+**/src/main/resources/public.key
+**/src/main/resources/application.yml
+user-service/src/main/resources/application.yml
+loan-server/src/main/resources/application.yml
+auth-server/src/main/resources/application.yml
+account-service/src/main/resources/application.yml
+kyc-service/src/main/resources/application.yml
+docker-compose.yml
+.env

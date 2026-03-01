@@ -1,0 +1,305 @@
+﻿package com.banking.loan.service;
+
+import com.banking.loan.event.LoanApprovedEvent;
+import com.banking.loan.model.*;
+import com.banking.loan.repository.LoanRepository;
+import com.banking.loan.response.*;
+import com.google.gson.Gson;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import org.springframework.http.*;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.client.RestTemplate;
+
+
+import java.math.BigDecimal;
+import java.nio.file.AccessDeniedException;
+import java.time.LocalDate;
+import java.util.List;
+
+import static com.banking.loan.notification.LoanEmailBuilder.buildLoanEmail;
+
+@Service
+@Transactional
+public class LoanServiceImpl implements LoanService {
+    @Autowired
+    private RedisService redisService;
+    @Autowired
+    private  LoanRepository loanRepository;
+    @Autowired
+    private RestTemplate restTemplate;
+    @Autowired
+    private  KafkaProducerService kafkaProducerService;
+    @Autowired
+    private   LoanProducer loanProducer;
+
+    @Override
+    public LoanResponseDto applyLoan(LoanRequestDto req, String username, String token) throws AccessDeniedException {
+
+        // 🔐 Headers
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        // 📡 Call Account Service
+        ResponseEntity<AccountResponse> response = restTemplate.exchange(
+                "http://ACCOUNT/api/accounts/user/{accountNumber}",
+                HttpMethod.GET,
+                entity,
+                AccountResponse.class,
+                req.getAccountNumber()
+        );
+
+        if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+            throw new RuntimeException("Account service validation failed");
+        }
+
+        // 🔐 Ownership validation
+        if (!response.getBody().getUsername().equals(username)) {
+            throw new AccessDeniedException("You cannot apply loan for another user's account");
+        }
+
+        // 💰 EMI Calculation
+        BigDecimal emi = calculateEmi(
+                req.getPrincipalAmount(),
+                req.getInterestRate(),
+                req.getTenureMonths()
+        );
+
+        // 🏦 Save Loan
+        Loan loan = new Loan();
+        loan.setAccountNumber(req.getAccountNumber());
+        loan.setLoanType(req.getLoanType());
+
+        loan.setPrincipalAmount(req.getPrincipalAmount());
+        loan.setInterestRate(req.getInterestRate());
+        loan.setTenureMonths(req.getTenureMonths());
+        loan.setEmiAmount(emi);
+        loan.setStatus(LoanStatus.PENDING);
+        loan.setCreatedAt(LocalDate.now());
+        loan.setUpdatedAt(LocalDate.now());
+
+        Loan saved = loanRepository.save(loan);
+
+
+
+
+
+        LoanMsg event = new LoanMsg();
+        event.setEmail(loanRepository.findEmailByAccountNumber(req.getAccountNumber()));
+        event.setUsername("Loan Application Received");
+        event.setBody(buildLoanEmail(username, req));
+
+        kafkaProducerService.sendLoanMsg(
+                "banking-loans",
+                new Gson().toJson(event)
+        );
+
+        return mapToDto(saved);
+    }
+
+
+    @Override
+    public List<LoanResponseDto> getLoansByAccountNumber(String accountNumber) {
+        return loanRepository.findByAccountNumber(accountNumber)
+                .stream()
+                .map(this::mapToDto)
+                .toList();
+    }
+
+    @Override
+    public LoanResponseDto getLoanById(Long id) {
+        return loanRepository.findById(id)
+                .map(this::mapToDto)
+                .orElseThrow(() -> new RuntimeException("Loan not found"));
+    }
+
+    @Override
+    public LoanResponseDto makeRepayment(Long loanId,String username,String token) {
+
+        Loan loan = loanRepository.findById(loanId)
+                .orElseThrow(() -> new RuntimeException("Loan not found"));
+
+        // Calculate remaining amount BEFORE repayment
+        BigDecimal principal = loan.getPrincipalAmount();
+        BigDecimal emiPaid = loan.getEmiAmount();
+
+        // Prevent over-payment negative balance
+        BigDecimal remainingBefore = principal;
+
+        // New remaining balance
+        BigDecimal remainingAfter = remainingBefore.subtract(emiPaid);
+        if (remainingAfter.compareTo(BigDecimal.ZERO) < 0) {
+            remainingAfter = BigDecimal.ZERO;
+        }
+
+        // Update loan status
+        if (remainingAfter.compareTo(BigDecimal.ZERO) == 0) {
+            loan.setStatus(LoanStatus.CLOSED);
+        } else {
+            loan.setStatus(LoanStatus.ACTIVE);
+        }
+
+        loan.setPrincipalAmount(remainingAfter);
+        loan.setUpdatedAt(LocalDate.now());
+
+        Loan saved = loanRepository.save(loan);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(token);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        HttpEntity<Void> entity = new HttpEntity<>(headers);
+
+        // 📡 Call User Service
+        ResponseEntity<UserResponse> response = restTemplate.exchange(
+                "http://USER/api/users/{username}",
+                HttpMethod.GET,
+                entity,
+                UserResponse.class,
+                username
+        );
+
+        if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+            throw new RuntimeException("User service validation failed");
+        }
+
+        UserResponse user = response.getBody();
+        String fullname = user.getUsername();
+        String email = user.getEmail();
+
+        // EMAIL SUBJECT
+        String subject = "💳 Loan Repayment Successful – ClearLedger Bank";
+
+        // FINAL EMAIL HTML BODY
+        String body = "<!DOCTYPE html>" +
+                "<html>" +
+                "<head>" +
+                "  <meta charset='UTF-8'>" +
+                "  <style>" +
+                "    body { font-family: Arial, sans-serif; background-color: #f4f4f4; margin: 0; padding: 0; }" +
+                "    .container { background-color: #ffffff; padding: 20px; margin: 30px auto; width: 90%; max-width: 600px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }" +
+                "    .header { background-color: #0046be; color: white; padding: 15px; border-radius: 10px 10px 0 0; text-align: center; }" +
+                "    .logo { max-width: 100px; margin-bottom: 10px; }" +
+                "    .content { padding: 20px; color: #333333; line-height: 1.6; }" +
+                "    .footer { text-align: center; font-size: 12px; color: #888888; padding-top: 15px; }" +
+                "    .highlight { font-weight: bold; color: #0046be; }" +
+                "  </style>" +
+                "</head>" +
+                "<body>" +
+                "  <div class='container'>" +
+                "    <div class='header'>" +
+                "      <img src='YOUR_LOGO_URL_HERE' alt='ClearLedger Logo' class='logo'>" +
+                "      <h1>Payment Successful 💳</h1>" +
+                "    </div>" +
+                "    <div class='content'>" +
+                "      <p>Hello <strong>" + fullname + "</strong>,</p>" +
+                "      <p>Your EMI repayment has been received successfully.</p>" +
+                "      <p><strong>Loan Type:</strong> " + loan.getLoanType() + "</p>" +
+                "      <p><strong>Amount Paid:</strong> ₹" + emiPaid + "</p>" +
+                "      <p><strong>Remaining Balance:</strong> ₹" + remainingAfter + "</p>" +
+                "      <p>Status: <strong>" + loan.getStatus() + "</strong></p>" +
+                "      <p>Thank you for maintaining a good repayment record.</p>" +
+                "    </div>" +
+                "    <div class='footer'>" +
+                "      &copy; 2025 ClearLedger – Equinox Finance Bank. All rights reserved." +
+                "    </div>" +
+                "  </div>" +
+                "</body>" +
+                "</html>";
+
+        // KAFKA EVENT
+        LoanMsg event = new LoanMsg();
+        event.setUsername(fullname);
+        event.setEmail(email);
+//        event.setSubject(subject);
+        event.setBody(body);
+
+        String json = new Gson().toJson(event);
+        kafkaProducerService.sendLoanMsg("banking-loans", json);
+
+        return mapToDto(saved);
+    }
+    private LoanResponseDto mapToDto(Loan l) {
+        LoanResponseDto dto = new LoanResponseDto();
+
+        dto.setId(l.getId());
+        dto.setAccountNumber(l.getAccountNumber());
+        dto.setLoanType(l.getLoanType());
+        dto.setPrincipalAmount(l.getPrincipalAmount());
+        dto.setInterestRate(l.getInterestRate());
+        dto.setTenureMonths(l.getTenureMonths());
+        dto.setEmiAmount(l.getEmiAmount());
+        dto.setStatus(l.getStatus());
+        dto.setStartDate(l.getStartDate());
+        dto.setEndDate(l.getEndDate());
+
+        return dto;
+    }
+
+
+    // Basic EMI formula
+    private BigDecimal calculateEmi(BigDecimal principal, double annualInterest, int tenureMonths) {
+        double monthlyRate = annualInterest / 12 / 100.0;
+        if (monthlyRate == 0) {
+            return principal.divide(BigDecimal.valueOf(tenureMonths), BigDecimal.ROUND_HALF_UP);
+        }
+        double emi = (principal.doubleValue() * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths))
+                / (Math.pow(1 + monthlyRate, tenureMonths) - 1);
+        return BigDecimal.valueOf(emi).setScale(2, BigDecimal.ROUND_HALF_UP);
+    }
+
+
+    @Override
+    public LoanResponseDto approveLoan(Long loanId) {
+
+        Loan loan = loanRepository.findById(loanId)
+                .orElseThrow(() -> new RuntimeException("Loan not found"));
+
+        loan.setStatus(LoanStatus.APPROVED);
+        loan.setStartDate(LocalDate.now());
+        loan.setEndDate(LocalDate.now().plusMonths(loan.getTenureMonths()));
+
+        LoanApprovedEvent event =
+                new LoanApprovedEvent(
+                        loan.getId(),
+                        loan.getAccountNumber(),
+                        loan.getPrincipalAmount()
+                );
+
+        loanProducer.sendLoanApprovedEvent(event);
+
+        return mapToDto(loanRepository.save(loan));
+    }
+
+    @Override
+    public List<Loan> getPendingLoans() {
+        return loanRepository.findByStatus(LoanStatus.PENDING);
+    }
+
+    @Override
+    public List<Loan> getActiveLoans() {
+        return loanRepository.findByStatus(LoanStatus.APPROVED);
+    }
+
+    @Override
+    public LoanResponseDto rejectLoan(Long loanId) {
+
+        Loan loan = loanRepository.findById(loanId)
+                .orElseThrow(() -> new RuntimeException("Loan not found"));
+
+        loan.setStatus(LoanStatus.REJECTED);
+        loan.setStartDate(LocalDate.now());
+        loan.setEndDate(LocalDate.now());
+
+        return mapToDto(loanRepository.save(loan));
+    }
+
+
+
+
+}
