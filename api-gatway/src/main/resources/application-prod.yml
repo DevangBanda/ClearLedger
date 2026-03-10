@@ -1,9 +1,9 @@
-server:
+﻿server:
   port: 8080
 
 spring:
   application:
-    name: API-GATEWAY
+    name: clearledger-gateway
 
   cloud:
     gateway:
@@ -11,6 +11,10 @@ spring:
         locator:
           enabled: true
           lower-case-service-id: true
+
+      httpclient:
+        connect-timeout: 5000
+        response-timeout: 10s
 
       routes:
 
