@@ -55,3 +55,9 @@ management:
     export:
       prometheus:
         enabled: true
+
+
+clearledger:
+  auth:
+    jwt-expiration-ms: 86400000
+    token-prefix: Bearer
