@@ -60,3 +60,9 @@ management:
     export:
       prometheus:
         enabled: true
+
+
+clearledger:
+  account:
+    number-prefix: CL
+    max-accounts-per-user: 5
