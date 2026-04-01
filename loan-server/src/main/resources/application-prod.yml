@@ -67,3 +67,10 @@ management:
     export:
       prometheus:
         enabled: true
+
+
+clearledger:
+  loan:
+    max-amount: 1000000
+    min-tenure-months: 6
+    max-tenure-months: 360
