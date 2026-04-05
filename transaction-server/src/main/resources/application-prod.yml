@@ -44,3 +44,9 @@ management:
     export:
       prometheus:
         enabled: true
+
+
+clearledger:
+  transaction:
+    daily-limit: 500000
+    single-transfer-limit: 100000
