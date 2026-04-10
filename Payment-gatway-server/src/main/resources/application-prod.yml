@@ -45,3 +45,9 @@ management:
     export:
       prometheus:
         enabled: true
+
+
+clearledger:
+  payment:
+    timeout-ms: 30000
+    retry-attempts: 3
