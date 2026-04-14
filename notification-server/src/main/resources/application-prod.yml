@@ -3,7 +3,7 @@
 
 spring:
   application:
-    name: notification
+    name: clearledger-notification
 
 
   kafka:
@@ -46,3 +46,12 @@ management:
     export:
       prometheus:
         enabled: true
+
+
+spring:
+  mail:
+    default-encoding: UTF-8
+
+clearledger:
+  notification:
+    async-pool-size: 10
