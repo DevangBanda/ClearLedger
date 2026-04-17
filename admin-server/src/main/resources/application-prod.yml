@@ -3,7 +3,7 @@
 
 spring:
   application:
-    name: admin
+    name: clearledger-admin
 
   cloud:
     loadbalancer:
