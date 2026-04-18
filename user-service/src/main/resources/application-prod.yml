@@ -3,7 +3,7 @@
 
 spring:
   application:
-    name: user
+    name: clearledger-user
 
 
   datasource:
