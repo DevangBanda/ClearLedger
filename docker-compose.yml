@@ -1,4 +1,7 @@
-﻿version: "3.8"
+﻿# ClearLedger — Docker Compose Configuration
+# All services, infrastructure, and networking
+
+version: "3.9"
 
 services:
 
